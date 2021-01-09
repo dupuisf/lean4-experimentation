@@ -4,6 +4,21 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Frédéric Dupuis
 -/
 
+/- Tactics -/
+
+-- This one comes directly from the documentation
+macro "obtain " p:term " from " d:term : tactic =>
+  `(tactic| match $d:term with | $p:term => ?_)
+
+macro "rcases " d:term " with " p:term : tactic =>
+  `(tactic| match $d:term with | $p:term => ?_)
+
+macro "use " p:term : tactic => `(tactic| refine ⟨$p:term, ?_⟩)
+macro "exfalso" : tactic => `(tactic| apply False.elim)
+macro "left" : tactic => `(tactic| apply Or.inl)
+macro "right" : tactic => `(tactic| apply Or.inr)
+macro "by_cases" h:term : tactic => `(tactic| refine @Decidable.byCases $h:term _ _ ?_ ?_)
+
 /- definition.lean -/
 
 inductive mynat where
@@ -14,12 +29,42 @@ notation "ℕ" => mynat  -- The one benefit of playing this game in Lean 4
 
 namespace mynat
 
-def FromNat (n : Nat) : ℕ := match n with
+def beq : ℕ → ℕ → Bool
+| zero,       zero        => true
+| zero,       succ m      => false
+| succ n,     zero        => false
+| succ n,     succ m      => beq n m
+
+theorem eqOfBeqEqTrue : {n m : ℕ} → Eq (beq n m) true → Eq n m
+  | zero,   zero,   h => rfl
+  | zero,   succ m, h => Bool.noConfusion h
+  | succ n, zero,   h => Bool.noConfusion h
+  | succ n, succ m, h =>
+    have Eq (beq n m) true from h
+    have Eq n m from eqOfBeqEqTrue this
+    this ▸ rfl
+
+theorem neOfBeqEqFalse : {n m : ℕ} → Eq (beq n m) false → Not (Eq n m)
+  | zero,   zero,   h₁, h₂ => Bool.noConfusion h₁
+  | zero,   succ m, h₁, h₂ => mynat.noConfusion h₂
+  | succ n, zero,   h₁, h₂ => mynat.noConfusion h₂
+  | succ n, succ m, h₁, h₂ =>
+    have Eq (beq n m) false from h₁
+    mynat.noConfusion h₂ (fun h₂ => absurd h₂ (neOfBeqEqFalse this))
+
+protected def decEq (n m : ℕ) : Decidable (Eq n m) :=
+  match h:beq n m with
+  | true  => isTrue (eqOfBeqEqTrue h)
+  | false => isFalse (neOfBeqEqFalse h)
+
+instance : DecidableEq ℕ := mynat.decEq
+
+def fromNat (n : Nat) : ℕ := match n with
 | Nat.zero      => mynat.zero
-| Nat.succ k    => mynat.succ $ FromNat k
+| Nat.succ k    => mynat.succ $ fromNat k
 
 instance : OfNat ℕ n where
-    ofNat := FromNat n
+    ofNat := fromNat n
 
 theorem OneEqSuccZero : (1 : ℕ) = succ 0 := rfl
 
@@ -202,7 +247,12 @@ theorem AddLeftCancel (t a b : ℕ) : t + a = t + b → a = b := fun h => by ind
 | zero          => rw [ZeroAdd', ZeroAdd'] at h;  exact h
 | succ k ih     => rw [SuccAdd, SuccAdd] at h; exact ih $ SuccInj h 
 
-theorem AddRightCancelIff (t a b: ℕ) : a + t = b + t ↔ a = b := Iff.intro (AddRightCancel a t b) (fun h => by rw [h])
+theorem AddRightCancelIff (t a b: ℕ) : a + t = b + t ↔ a = b := by
+    apply Iff.intro
+    intro h
+    exact AddRightCancel a t b h
+    intro h
+    rw h
 
 theorem EqZeroOfAddRightEqSelf {a b : ℕ} : a + b = a → b = 0 := fun h => by
     have h' : a + b = a + 0 := by rw [AddZero, h]
@@ -239,10 +289,10 @@ theorem MulPos {a b : ℕ} : a ≠ 0 → b ≠ 0 → a * b ≠ 0 := match a with
 
 -- This doesn't work with `match ... with` for some reason
 theorem EqZeroOrEqZeroOfMulEqZero {a b : ℕ} (h : a*b = 0) : a = 0 ∨ b = 0 := by cases a with
-| zero      => exact Or.inl rfl
+| zero      => left; rfl
 | succ a'   => cases b with
-    | zero      => exact Or.inr rfl
-    | succ b'   => exact False.elim $ MulPos (SuccNeZero a') (SuccNeZero b') h
+    | zero      => right; rfl
+    | succ b'   => { exfalso; exact MulPos (SuccNeZero a') (SuccNeZero b') h }
 
 theorem MulEqZeroIff (a b : ℕ) : a * b = 0 ↔ a = 0 ∨ b = 0 := Iff.intro EqZeroOrEqZeroOfMulEqZero $ fun h => by cases h with
 | Or.inl ha => rw [ha, ZeroMul]
@@ -327,3 +377,7 @@ theorem LtAuxOne (a b : ℕ) : a ≤ b ∧ ¬ (b ≤ a) → succ a ≤ b := sorr
 theorem LtAuxTwo (a b : ℕ) : succ a ≤ b → a ≤ b ∧ ¬ (b ≤ a) := sorry
 
 theorem LtIffSuccLe (a b : ℕ) : a < b ↔ succ a ≤ b := sorry
+
+example : ∃ x : ℕ, x = 0 := by
+    use 0
+    rfl
